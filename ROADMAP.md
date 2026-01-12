@@ -6,6 +6,9 @@ The roadmap follows a **deliberate, staged approach**: new capabilities are adde
 
 Some features may be moved earlier or later depending on real-world constraints and practical needs.
 
+For long-term system vision and memory models (beyond Search API scope), see:
+[Cognitive Architecture Notes](docs/COGNITIVE_ARCHITECTURE.md)
+
 ---
 
 ## Status: V1 (Released)
