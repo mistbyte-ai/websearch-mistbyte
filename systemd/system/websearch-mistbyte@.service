@@ -1,0 +1,21 @@
+[Unit]
+Description=WebSearch Mistbyte Searcher Service (Search API V1) (user %i)
+Wants=network-online.target searxng@%i.service
+After=network-online.target searxng@%i.service
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=@PROJECT_DIR@
+ExecStart=/usr/bin/node @PROJECT_DIR@/src/searcher/app.mjs --config @CFG_DIR@/searcher.yaml
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+Environment=NODE_ENV=production
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

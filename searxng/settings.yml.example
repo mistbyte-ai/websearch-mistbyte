@@ -1,0 +1,89 @@
+# SearXNG settings for local usage (container).
+#
+# This file is copied to:
+# - USER mode:   ~/.config/mistbyte-ai/websearch/searxng/settings.yml
+# - SYSTEM mode: /etc/mistbyte-ai/websearch/searxng/settings.yml
+#
+# IMPORTANT:
+# - Leave secret_key as "CHANGE_ME" and the installer will auto-generate a strong key.
+# - Proxy section is provided as commented examples. Uncomment if you need tunneling.
+# - Host binding/port are controlled by the container; on the host we bind to 127.0.0.1:8888.
+
+use_default_settings: true
+
+general:
+  instance_name: "websearch-mistbyte (local searxng)"
+  debug: false
+
+server:
+  secret_key: "CHANGE_ME"
+  limiter: true
+  image_proxy: true
+  method: GET
+  # Container listens on 0.0.0.0:8080, we bind it to 127.0.0.1:8888 on the host.
+  bind_address: "0.0.0.0"
+  port: 8080
+
+ui:
+  static_use_hash: true
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  # NOTE: change to your preferred language (e.g. "en", "ru", "de", ...)
+  default_lang: "ru"
+  formats:
+    - html
+    - json
+
+# =========================
+# PROXY / TUNNEL (optional)
+# =========================
+outgoing:
+  request_timeout: 12.0
+
+  # Uncomment to force outbound traffic through a SOCKS proxy.
+  # Using "socks5h" makes DNS resolution happen through the proxy.
+  #proxies:
+  #  socks5:
+  #    - socks5h://127.0.0.1:1081
+
+  # If you want DNS to go through the proxy as well, disabling HTTP/2 is often helpful.
+  #enable_http2: false
+
+engines:
+  - name: duckduckgo
+    disabled: false
+
+  - name: brave
+    disabled: true
+
+  - name: bing
+    disabled: false
+
+  - name: qwant
+    disabled: false
+
+  - name: wikipedia
+    disabled: false
+
+  - name: google
+    disabled: true
+
+  - name: startpage
+    disabled: true
+
+  # Russia-specific. Disabled by default in the example.
+  - name: yandex
+    disabled: true
+    base_url: https://yandex.ru
+
+# =========================
+# ADVANCED: Limiter (requires Valkey/Redis)
+# =========================
+# If you want to enable the limiter, read:
+# https://docs.searxng.org/admin/searx.limiter.html
+# and provide limiter.toml + Valkey/Redis, then set:
+#
+# server:
+#   limiter: true

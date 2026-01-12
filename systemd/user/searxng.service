@@ -1,0 +1,20 @@
+[Unit]
+Description=SearXNG (rootless podman) on 127.0.0.1:8888
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+WorkingDirectory=%h
+
+# IMPORTANT: :Z for SELinux on Fedora
+ExecStart=/usr/bin/podman run --rm --name searxng-mistbyte --userns=keep-id -p 127.0.0.1:8888:8080 -v @CFG_DIR@/searxng:/etc/searxng:Z docker.io/searxng/searxng:latest
+
+ExecStop=/usr/bin/podman stop -t 10 searxng-mistbyte
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

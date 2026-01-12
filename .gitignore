@@ -1,0 +1,4 @@
+*_pycache_*
+node_modules/
+.cache/
+config/searcher.yam

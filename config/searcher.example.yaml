@@ -1,0 +1,66 @@
+service:
+  listen:
+    tcp:
+      host: "127.0.0.1"
+      port: 7070
+    unix_socket: null
+  fetch:
+    # Engine for fetching and extraction:
+    # - local: direct HTTP fetch + Readability cleanup (default, privacy-friendly)
+    # - jina: use Jina Reader (https://r.jina.ai/<URL>) as an alternate extractor
+    engine: "local"
+    headers:
+      user_agent: "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0"
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      accept_language: "en-US,en;q=0.9"
+    proxy:
+      # Optional SOCKS proxy for outbound fetch/extraction (both local and Jina engine).
+      # Recommended scheme: socks5h://127.0.0.1:1081 (DNS via proxy) ||"socks5h://login:password@127.0.0.1:1081" if (@, :, /, #, %) in passwd - use URLencoding
+      socks_url: ""
+    # Jina Reader settings (used only if engine is "jina" or plugin requests it).
+    jina:
+      base_url: "https://r.jina.ai/"
+      api_key: ""  # Optional: Bearer token for higher rate limits
+
+  timeouts_ms:
+    search: 6000
+    fetch: 12000
+  limits:
+    max_results: 10
+    max_snippet_chars: 600
+    max_context_chars: 12000
+    max_fetch_pages: 3
+    max_download_bytes_per_page: 2000000
+    max_extract_chars_per_page: 300000
+    allowed_content_types:
+    - text/html
+    - application/xhtml+xml
+    - text/plain
+    max_redirects: 5
+    max_render_content_chars_per_item: 2000
+  cache:
+    # Simple extracted-text cache (V1).
+    # Key: sha1(engine + ":" + normalized_url)
+    enabled: true
+    dir: ".cache/websearch"
+    ttl_s: 86400
+    # How often to run TTL cleanup while the service is running.
+    sweep_interval_s: 1800
+backends:
+  order: ["searxng", "duckduckgo"]
+
+  searxng:
+    enabled: true
+    base_url: "http://127.0.0.1:8888"
+
+  duckduckgo:
+    enabled: true
+    mode: "instant"
+    region: null
+    safesearch: null
+
+render:
+  include_rank: true
+  include_source: true
+  include_snippet: true
+  trim_strategy: "drop_items_then_trim_snippets"
