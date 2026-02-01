@@ -34,10 +34,10 @@ DEFAULT_CFG = {
 	# Legacy single timeout (kept for backward compatibility)
 	"timeout_llm_s": 10,
 	# More granular timeouts (advanced; edit llm_web_search.json manually)
-	"timeout_rewrite_s": 10,
+	"timeout_rewrite_s": 20,
 	"timeout_rank_s": 30,
 	"timeout_pack_s": 60,
-	"rewrite_max_tokens": 512,
+	"rewrite_max_tokens": 1024,
 
 	"openai_api_base": "http://127.0.0.1:5000/v1",
 	"openai_model": "",
@@ -167,7 +167,7 @@ def ui():
 		query_mode = gr.Dropdown(choices=["user_text", "llm_query"], value=cfg["query_mode"], label="Query mode")
 
 		backend = gr.Dropdown(choices=["searxng", "duckduckgo"], value=cfg["backend"], label="Backend")
-		search_mode = gr.Dropdown(choices=["simple", "full"], value=cfg["search_mode"], label="Search mode (v1 uses simple)")
+		search_mode = gr.Dropdown(choices=["simple", "full"], value=cfg["search_mode"], label="Search mode")
 		full_handling = gr.Dropdown(
 			choices=["inject", "llm_pack"],
 			value=cfg["full_handling"],
@@ -339,22 +339,28 @@ def _render_pack_summary(summary_text: str) -> str:
 	return "\n".join(out)
 
 def _extract_json_object(text: str) -> str:
-	# Best-effort extraction of a JSON object from arbitrary text.
+	# Best-effort extraction of a JSON value (object or array) from arbitrary text.
 	if not isinstance(text, str):
 		return ""
 	s = text.strip()
 	if not s:
 		return ""
-	if s.startswith("{") and s.endswith("}"):
+	if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
 		return s
+	# Try object first
 	a = s.find("{")
 	b = s.rfind("}")
-	if a == -1 or b == -1 or b <= a:
-		return ""
-	return s[a:b+1].strip()
+	if a != -1 and b != -1 and b > a:
+		return s[a:b+1].strip()
+	# Then try array
+	a = s.find("[")
+	b = s.rfind("]")
+	if a != -1 and b != -1 and b > a:
+		return s[a:b+1].strip()
+	return ""
 
 def _extract_json_after_anchor(raw: str, anchor: str) -> str:
-	# Extract a JSON object after a line prefix like "JSON:" (case-insensitive).
+	# Extract a JSON value (object or array) after a line prefix like "JSON:" (case-insensitive).
 	if not isinstance(raw, str):
 		return ""
 	s = raw.replace("\r", "\n")
@@ -460,10 +466,21 @@ def _call_openai_snippet_rank(query_text: str, candidates: list, want_n: int, ti
 	today = _today_utc_iso_date()
 	system = (
 		(f"Current date: {today}.\n" if today else "") +
+		"Ranking policy for time relevance:\n"
+		"- If the question requires present-time relevance, prioritize candidates whose title or snippet contains explicit dates or years closest to the Current date.\n"
+		"- Prefer candidates explicitly mentioning the Current year.\n"
+		"- Deprioritize candidates that clearly refer to an earlier period (e.g. year ranges ending before the Current date, or terms like former, previous, ex-).\n"
+		"- If a source explicitly states it is archived, frozen in time, not updated, or deprecated, deprioritize it for present-time or \"current/latest\" questions.\n"
+		"- If candidates contradict each other about a present-time fact, prefer those consistent with the most recent, explicitly time-anchored information closest to the Current date.\n"
+		"Ranking policy for source authority:\n"
+		"- Prefer original, official, or primary sources (e.g. government websites, official vendor or project pages) over secondary summaries, biography pages, SEO articles, or mirrors.\n"
+		"Ranking policy for language:\n"
+		"- Prefer sources in the same language as the question and English.\n"
+		"- If the question is not in Chinese, deprioritize Chinese-language sources unless there are no reasonable alternatives.\n"
 		"You are ranking web search results by relevance to a user question. "
-		"Return ONLY valid JSON prefixed with 'JSON: ' like: JSON: {\"pick\":[...]} "
-		"with distinct indices. "
-		f"Pick exactly {int(want_n)} indices (or fewer if fewer candidates). "
+		"Return ONLY valid JSON prefixed with 'JSON: ' like: JSON: {\"pick\":[...]}. "
+		"Indices must be distinct. "
+		f"Pick exactly {int(want_n)} indices (or fewer if fewer candidates are available). "
 		"No extra text."
 	)
 
@@ -554,9 +571,14 @@ def _call_openai_snippet_rank(query_text: str, candidates: list, want_n: int, ti
 	except Exception:
 		return []
 
-	pick = obj.get("pick")
-	if not isinstance(pick, list):
-		return []
+	# Accept both object format {"pick":[...]} and plain list format [..]
+	# Some small models ignore the contract and output a bare JSON array.
+	if isinstance(obj, list):
+		pick = obj
+	else:
+		pick = obj.get("pick") if isinstance(obj, dict) else None
+		if not isinstance(pick, list):
+			return []
 
 	n = len(candidates)
 	seen = set()
@@ -577,7 +599,7 @@ def _call_openai_snippet_rank(query_text: str, candidates: list, want_n: int, ti
 
 	return out
 
-def _call_search_api_ucp(query_text: str, want_rendered: bool, want_items: bool, pick_ids: list|None=None, search_mode: str|None=None) -> dict:
+def _call_search_api_ucp(query_text: str, want_rendered: bool, want_items: bool, pick_ids: list|None=None, search_mode: str|None=None, seed_items: list|None=None) -> dict:
 	# Full mode can take significantly longer because the Search Service fetches and extracts pages.
 	# Use a separate timeout for the client-side HTTP request to avoid returning an empty context pack.
 	mode = (search_mode or cfg.get("search_mode") or "simple")
@@ -608,6 +630,8 @@ def _call_search_api_ucp(query_text: str, want_rendered: bool, want_items: bool,
 
 	if pick_ids is not None:
 		payload["constraints"]["pick_ids"] = pick_ids
+	if seed_items is not None:
+		payload["constraints"]["seed_items"] = seed_items
 
 	return _http_post_json(cfg["search_api_url"], payload, int(to))
 
@@ -629,9 +653,19 @@ def _call_openai_rewrite(user_text: str) -> str:
 	except Exception:
 		max_chars = 200
 
-	today = _today_utc_iso_date()
+	# Reference datetime for time-anchored queries (UTC, ISO-8601)
+	ref_dt = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 	system = (
-		(f"Current date: {today}.\n" if today else "") +
+		f"Current datetime (reference, UTC): {ref_dt}\n"
+		"Treat the reference datetime above as the real present time ('now') for this request. Do NOT question it or compare it to your training cutoff.\n"
+		"Any time-relative expressions in the user request (e.g. now, current, today, this year)\n"
+		"MUST be interpreted relative to the reference datetime above.\n"
+		"If the request is time-relative, the search query MUST explicitly include\n"
+		"a time anchor (year or date) derived from the reference datetime.\n"
+		"If a time anchor is included, use ONLY the year or date (YYYY or YYYY-MM-DD).\n"
+		"Do NOT include time-of-day or timezone.\n"
+		"Do NOT inject or guess a specific PERSON name unless it is explicitly present in the user text. Technical terms, product names, libraries, commands, and acronyms are allowed.\n"
+		"If the user asks 'who is ... now/current/today' (or similar), keep the query person-agnostic (do NOT include any person's name).\n"
 		"Rewrite the user's text into a concise web search query.\n"
 		"Return ONLY the query text as a SINGLE LINE.\n"
 		"Be brief and factual.\n"
@@ -716,7 +750,21 @@ def _call_openai_pack(user_text: str, context_pack: str) -> str:
 		(f"Current date: {today}.\n" if today else "") +
 		"You are a summarizer. You will be given a CONTEXT_PACK with web search results and extracted page text.\n"
 		"Answer the user's question using ONLY the information in CONTEXT_PACK.\n"
-		"If the answer is not present, say you could not find it in the provided sources.\n"
+
+		# --- rules about time & conflicts ---
+		"If sources contradict each other about present-time facts, prefer those consistent with the most recent, explicitly time-anchored information.\n"
+		"If a source explicitly says it is archived, frozen in time, not updated, or deprecated, deprioritize it for present-time or 'current/latest' claims.\n"
+		"If no source in CONTEXT_PACK explicitly supports the present-time fact as of the Current date, say you could not find it in the provided sources.\n"
+
+		# --- algorithmic guidance ---
+		"Process:\n"
+		"1) Identify the most up-to-date answer target strictly from explicit cues in CONTEXT_PACK "
+		"(e.g. 'current', 'incumbent', 'latest', 'as of <date/year>', 'version X', 'term ...–', 'assumed office', 'released on').\n"
+		"2) Ignore sources that describe a different time period or state, unless the question explicitly asks for historical information.\n"
+		"3) Answer the question using ONLY sources consistent with the target identified in step (1).\n"
+		"4) If no such source exists, say you could not find the answer in the provided sources.\n"
+
+		# --- output constraints ---
 		"Be concise and factual. Do NOT include reasoning or <think>/<thinking> blocks.\n"
 		"Output MUST start with 'PACK: ' followed by the summary text."
 	)
@@ -903,7 +951,8 @@ def input_modifier(string, state, is_chat=False):
 			if (cfg.get("search_mode") or "simple") == "full":
 				# Full mode: re-call Search API with pick_ids so the server can fetch/extract pages.
 				try:
-					ucp2 = _call_search_api_ucp(query, True, True, picked, search_mode="full")
+					# Keep extraction aligned with the SAME candidate list we just ranked.
+					ucp2 = _call_search_api_ucp(query, True, True, picked, search_mode="full", seed_items=items)
 					rendered = (ucp2.get("rendered_text") or "") if isinstance(ucp2, dict) else ""
 				except Exception:
 					rendered = ""
@@ -924,7 +973,8 @@ def input_modifier(string, state, is_chat=False):
 			# In full mode, ask searcher-service to fetch/extract the fallback picks so CONTENT is available.
 			if (cfg.get("search_mode") or "simple") == "full" and picked:
 				try:
-					u2 = _call_search_api_ucp(query, True, False, picked)
+					# Keep extraction aligned with the SAME candidate list we just ranked.
+					u2 = _call_search_api_ucp(query, True, False, picked, search_mode="full", seed_items=items)
 					rt = u2.get("rendered_text", "") if isinstance(u2, dict) else ""
 					if isinstance(rt, str) and rt:
 						rendered = rt
@@ -947,7 +997,8 @@ def input_modifier(string, state, is_chat=False):
 		if (cfg.get("search_mode") or "simple") == "full":
 			ids = list(range(0, len(unranked)))
 			try:
-				ucp2 = _call_search_api_ucp(query, True, True, ids, search_mode="full")
+				# Keep extraction aligned with the SAME candidate list we just ranked.
+				ucp2 = _call_search_api_ucp(query, True, True, ids, search_mode="full", seed_items=unranked)
 				rendered = (ucp2.get("rendered_text") or "") if isinstance(ucp2, dict) else ""
 			except Exception:
 				rendered = ""
@@ -975,4 +1026,4 @@ def input_modifier(string, state, is_chat=False):
 	return f"{rendered}\n\n{llm_user_text}"
 
 
-#<EOF script.py lines: 978>
+#<EOF script.py lines: 1013>

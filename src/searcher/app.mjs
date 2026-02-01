@@ -109,6 +109,19 @@ function _getPickIds(body) {
 	return out;
 }
 
+function _getSeedItems(body) {
+	const raw = body?.constraints?.seed_items;
+	if (!Array.isArray(raw) || raw.length === 0) return [];
+	const out = [];
+	for (const it of raw) {
+		if (!it || typeof it !== "object") continue;
+		const url = (it.url || "").toString().trim();
+		if (!url) continue;
+		out.push(it);
+	}
+	return out;
+}
+
 function _applyPick(items, pickIds) {
 	if (!Array.isArray(pickIds) || pickIds.length === 0) {
 		return { items, pickApplied: false };
@@ -161,9 +174,11 @@ fastify.post("/v1/cache/clear", async () => {
 
 fastify.post("/v1/search", async (request) => {
 	const t0 = Date.now();
+	const ts = Date.now();
 
 	const body = request.body ?? {};
 	const query = _getQueryText(body);
+	const seedItems = _getSeedItems(body);
 
 	const wantItems = body?.want?.items !== false;
 	const wantRendered = body?.want?.rendered_text !== false;
@@ -234,84 +249,89 @@ fastify.post("/v1/search", async (request) => {
 	let note = null;
 	let fallbackUsed = false;
 
-	if (!query) {
+	if (!query && (!seedItems || seedItems.length === 0)) {
 		note = "Empty query";
 	}
 	else {
-		let order = Array.isArray(config?.backends?.order)
-			? config.backends.order
-			: ["searxng", "duckduckgo"];
-
-		const forced = _getBackendPolicy(body);
-		if (forced) {
-			const isEnabled = (b) => {
-				if (b === "searxng") return !!config?.backends?.searxng?.enabled;
-				if (b === "duckduckgo") return !!config?.backends?.duckduckgo?.enabled;
-				return false;
-			};
-
-			if (forced === "duckduckgo") {
-				if (isEnabled("duckduckgo")) {
-					order = ["duckduckgo"];
-				} else {
-					note = "Requested backend 'duckduckgo' is disabled";
-					order = [];
-				}
-			} else if (forced === "searxng") {
-				if (isEnabled("searxng")) {
-					order = ["searxng", ...order.filter(v => v !== "searxng")];
-				} else {
-					note = "Requested backend 'searxng' is disabled";
-					// If the backend is unavailable, use the order from the config as a fallback.
-				}
-			} else {
-				note = `Unknown backend: ${forced}`;
-				// Do not break the order from the config.
-			}
+		if (seedItems && seedItems.length > 0) {
+			items = seedItems;
+			backendUsed = "seed_items";
+			note = "Using seed_items from client";
 		}
+		else {
+			let order = Array.isArray(config?.backends?.order)
+				? config.backends.order
+				: ["searxng", "duckduckgo"];
 
-		const ts = Date.now();
+			const forced = _getBackendPolicy(body);
+			if (forced) {
+				const isEnabled = (b) => {
+					if (b === "searxng") return !!config?.backends?.searxng?.enabled;
+					if (b === "duckduckgo") return !!config?.backends?.duckduckgo?.enabled;
+					return false;
+				};
 
-		for (let i = 0; i < order.length; i++) {
-			const b = order[i];
-
-			if (b === "searxng") {
-				if (!config?.backends?.searxng?.enabled) continue;
-				try {
-					items = await searxngSearchSimple({
-						baseUrl: config.backends.searxng.base_url,
-						query,
-						timeoutMs: timeoutSearchMs,
-						limit: maxResults
-					});
-
-					backendUsed = "searxng";
-					break;
-				}
-				catch (e) {
-					note = e?.message || String(e);
-					fallbackUsed = true;
-					continue;
+				if (forced === "duckduckgo") {
+					if (isEnabled("duckduckgo")) {
+						order = ["duckduckgo"];
+					} else {
+						note = "Requested backend 'duckduckgo' is disabled";
+						order = [];
+					}
+				} else if (forced === "searxng") {
+					if (isEnabled("searxng")) {
+						order = ["searxng", ...order.filter(v => v !== "searxng")];
+					} else {
+						note = "Requested backend 'searxng' is disabled";
+						// If the backend is unavailable, use the order from the config as a fallback.
+					}
+				} else {
+					note = `Unknown backend: ${forced}`;
+					// Do not break the order from the config.
 				}
 			}
 
-			if (b === "duckduckgo") {
-				if (!config?.backends?.duckduckgo?.enabled) continue;
+			for (let i = 0; i < order.length; i++) {
+				const b = order[i];
 
-				try {
-					items = await duckduckgoSearchSimple({
-						query,
-						timeoutMs: timeoutSearchMs,
-						limit: maxResults
-					});
+				if (b === "searxng") {
+					if (!config?.backends?.searxng?.enabled) continue;
+					try {
+						items = await searxngSearchSimple({
+							baseUrl: config.backends.searxng.base_url,
+							query,
+							timeoutMs: timeoutSearchMs,
+							limit: maxResults
+						});
 
-					backendUsed = "duckduckgo";
-					break;
+						backendUsed = "searxng";
+						break;
+					}
+					catch (e) {
+						note = e?.message || String(e);
+						fallbackUsed = true;
+						continue;
+					}
 				}
-				catch (e) {
-					note = e?.message || String(e);
-					fallbackUsed = true;
-					continue;
+
+				if (b === "duckduckgo") {
+					if (!config?.backends?.duckduckgo?.enabled) continue;
+
+					try {
+						items = await duckduckgoSearchSimple({
+							query,
+							timeoutMs: timeoutSearchMs,
+							limit: maxResults
+						});
+
+						backendUsed = "duckduckgo";
+						break;
+					}
+					catch (e) {
+						note = e?.message || String(e);
+						fallbackUsed = true;
+						continue;
+					}
 				}
 			}
 		}
@@ -522,4 +542,4 @@ catch (err) {
 	process.exit(1);
 }
 
-//<EOF app.mjs lines: 525>
+//<EOF app.mjs lines: 545>

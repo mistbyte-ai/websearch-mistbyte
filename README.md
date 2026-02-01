@@ -6,6 +6,13 @@ It provides **explicit, controllable, and reproducible** web search without pret
 
 This project was originally developed as the first building block of a larger local AI system (code-named **“The Junior”**), but is released as a **standalone, production-ready component**.
 
+
+---
+
+## Documentation
+
+- **FAQ (settings, troubleshooting, known limitations):** [`docs/FAQ.md`](docs/FAQ.md)
+- **Changelog (all releases):** [`CHANGELOG.md`](CHANGELOG.md)
 ---
 
 ## Why this exists
@@ -266,7 +273,11 @@ Advanced users may adapt it, but **violating this contract will break guarantees
 
 Full reference prompt:
 [`docs/system-prompt.txt`](docs/system-prompt.txt)
----
+
+Additional docs:
+- FAQ: [`docs/FAQ.md`](docs/FAQ.md)
+- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
+--
 
 ## Installation
 
@@ -367,6 +378,8 @@ Native Windows service installation is **not supported in V1**.
 
 ## Troubleshooting
 
+For a full troubleshooting guide and configuration reference, see [`docs/FAQ.md`](docs/FAQ.md).
+
 ### Podman pull fails with TLS handshake timeout
 
 If `podman pull` hangs or fails:
@@ -412,6 +425,12 @@ These limitations are **intentional**.
 This project is developed independently, without sponsors.
 
 Donations directly accelerate development of roadmap features.
+
+---
+
+## Releases
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the release history and what changed in each version.
 
 ---
 
