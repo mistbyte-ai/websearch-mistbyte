@@ -1,8 +1,8 @@
-# Search API V1 — Explicit Web Search for LLMs
+# Search API V1.2 — Explicit Web Search for LLMs
 
-Search API V1 is a local, non-agentic web search system designed for Large Language Models and built to integrate with Text Generation WebUI via a thin extension layer.
+Search API V1.2 is a local, non-agentic web search system designed for Large Language Models and built to integrate with Text Generation WebUI via a thin extension layer.
 
-It provides **explicit, controllable, and reproducible** web search without pretending that the model has direct internet access.
+It provides explicit, controllable, and reproducible web search without relying on hidden or hallucinated browsing behavior.
 
 This project was originally developed as the first building block of a larger local AI system (code-named **“The Junior”**), but is released as a **standalone, production-ready component**.
 
@@ -27,11 +27,16 @@ Most LLM integrations that claim “web access” suffer from at least one of th
 
 Search API V1 was designed to solve these problems **explicitly and honestly**.
 
+## Why this is useful
+
+WebSearcher focuses on context optimization and structured retrieval,
+not raw webpage dumping into the prompt.
+
 ---
 
 ## Design goals
 
-- No fake “I can browse the web”
+- No hallucinated browsing claims
 - Clear separation between **search** and **generation**
 - Deterministic, debuggable behavior
 - One search per user message (V1)
@@ -43,12 +48,9 @@ Search API V1 was designed to solve these problems **explicitly and honestly**.
 
 ## Core principles
 
-### 1. The LLM does NOT search on its own
+### 1. Web search is explicit and controllable
 
-The model:
-- never claims internet access,
-- never performs implicit searches,
-- never “checks” or “verifies” facts online by itself.
+The model does not perform hidden or implicit searches on its own.
 
 Search is only possible via an **explicit user marker**:
 
@@ -224,6 +226,32 @@ proxy:
 
 Both search and fetch stages respect this setting.
 
+## OpenAI API autodetection
+
+By default:
+
+```text
+openai_api_base = auto
+```
+
+WebSearcher will probe local Text Generation WebUI OpenAI-compatible API endpoints on:
+
+```text
+127.0.0.1:5000..5005
+```
+
+and automatically use the first working endpoint.
+
+This improves compatibility with newer multi-instance Text Generation WebUI setups.
+
+You can also force a specific instance manually:
+
+```text
+http://127.0.0.1:5001/v1
+```
+
+Useful when running multiple WebUI instances and wanting WebSearcher to always use a specific LLM backend.
+
 ---
 
 ## Cache (V1)
@@ -249,27 +277,34 @@ Cache locations:
 
 ## System prompt contract (important)
 
-This project relies on a **strict system prompt contract**.
+This project relies on a compatible system prompt contract.
 
-At minimum, the system prompt **must enforce the following rules**:
+The recommended prompt is designed to work with:
+- WebSearcher CONTEXT_PACK injection;
+- modern tool-enabled LLM workflows;
+- built-in Text Generation WebUI tools and web search.
 
-- The assistant does **NOT** have direct access to the web.
-- The assistant must **never claim** that it can browse, search, or verify information online.
-- Any `CONTEXT_PACK` must be treated as **explicitly provided input**, equivalent to user-supplied data.
-- When additional information is required, the assistant may ask for a search **only** by emitting:
-  ```
+At minimum, the system prompt should enforce the following rules:
+
+- The assistant must not falsely claim that it searched, browsed, fetched, verified, or checked online information unless tools actually returned relevant content.
+- Any `CONTEXT_PACK` must be treated as explicitly provided contextual input for the current task.
+- Information from `CONTEXT_PACK` or tool output should not be ignored solely because of training cutoff limitations.
+- If available tools fail or are unavailable, the assistant may ask the user to perform an additional search using:
+
   SEARCH_QUERY:
   <single line query>
-  ```
-- The search query must be **a single line**, with no explanations, reasoning, or formatting.
-- The assistant must **not** output reasoning, analysis, or `<think>` blocks when generating search queries.
 
-A reference system prompt used during development is included in the repository.
+- The search query must be a single line with no explanations or extra formatting.
+- The assistant should avoid inventing facts, sources, links, or citations.
 
-Advanced users may adapt it, but **violating this contract will break guarantees**, including:
-- hallucinated browsing,
-- incorrect handling of CONTEXT_PACK,
-- false “knowledge cutoff” claims.
+The recommended reference prompt used during development is included in the repository.
+
+Advanced users may adapt it, but incompatible prompt behavior may cause:
+- hallucinated browsing claims;
+- incorrect CONTEXT_PACK handling;
+- conflicts with built-in tools;
+- unnecessary context growth;
+- degraded retrieval quality.
 
 Full reference prompt:
 [`docs/system-prompt.txt`](docs/system-prompt.txt)
@@ -277,7 +312,8 @@ Full reference prompt:
 Additional docs:
 - FAQ: [`docs/FAQ.md`](docs/FAQ.md)
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md)
---
+
+---
 
 ## Installation
 
@@ -376,6 +412,22 @@ Native Windows service installation is **not supported in V1**.
 
 ---
 
+## Compatibility with newer Text Generation WebUI versions
+
+Recent versions of Text Generation WebUI include built-in web search and tool support.
+
+WebSearcher is designed to work alongside native tools instead of replacing them.
+
+The recommended system prompt was updated to:
+- avoid conflicts with built-in tools;
+- treat CONTEXT_PACK as optional contextual enrichment;
+- allow normal tool-enabled workflows.
+
+See:
+- `docs/system-prompt.txt`
+
+---
+
 ## Troubleshooting
 
 For a full troubleshooting guide and configuration reference, see [`docs/FAQ.md`](docs/FAQ.md).
@@ -425,6 +477,8 @@ These limitations are **intentional**.
 This project is developed independently, without sponsors.
 
 Donations directly accelerate development of roadmap features.
+
+https://web.tribute.tg/d/Ih8
 
 ---
 

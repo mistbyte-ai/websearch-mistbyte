@@ -1,4 +1,7 @@
-*_pycache_*
-node_modules/
-.cache/
-config/searcher.yam
+/config/searcher.yaml
+__pycache__/
+*.pyc
+/.cache/*
+repo2llmsnap/
+.chatgpt
+/.repo2llm-state.json

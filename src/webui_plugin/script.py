@@ -39,7 +39,7 @@ DEFAULT_CFG = {
 	"timeout_pack_s": 60,
 	"rewrite_max_tokens": 1024,
 
-	"openai_api_base": "http://127.0.0.1:5000/v1",
+	"openai_api_base": "auto",
 	"openai_model": "",
 }
 
@@ -73,6 +73,7 @@ PERSIST_KEYS = [
 	"timeout_rank_s",
 	"timeout_pack_s",
 	"timeout_search_full_s",
+	"openai_api_base",
 ]
 
 # params используется WebUI для отображаемого имени (и опционально settings.yaml),
@@ -120,7 +121,31 @@ def _is_webui_verbose() -> bool:
 	except Exception:
 		return False
 
+_OPENAI_API_BASE_CACHE = {
+	"configured": "",
+	"detected": "",
+}
+
+def _reset_openai_api_base_cache():
+	try:
+		_OPENAI_API_BASE_CACHE["configured"] = ""
+		_OPENAI_API_BASE_CACHE["detected"] = ""
+	except Exception:
+		pass
+
+def _normalize_openai_api_base_input(value) -> str:
+	s = (value or "").strip() if isinstance(value, str) else ""
+	if not s:
+		return "auto"
+	if s.lower() == "auto":
+		return "auto"
+	return s.rstrip("/")
+
 def _set_cfg(key: str, value):
+	if key == "openai_api_base":
+		value = _normalize_openai_api_base_input(value)
+		if cfg.get(key) != value:
+			_reset_openai_api_base_cache()
 	cfg[key] = value
 	return ""  # возвращаем в "sink" (скрытый textbox), чтобы gradio был доволен
 
@@ -128,7 +153,7 @@ def _on_search_mode_change(v):
 	cfg["search_mode"] = (v or "simple")
 	return "", gr.update(interactive=(cfg["search_mode"] == "full"))
 
-def _apply_and_save(enable_v, trigger_anywhere_v, query_mode_v, backend_v, search_mode_v, full_handling_v, fetch_engine_v, llm_query_until_newline_v, max_query_chars_v, llm_query_max_user_chars_v):
+def _apply_and_save(enable_v, trigger_anywhere_v, query_mode_v, backend_v, search_mode_v, full_handling_v, fetch_engine_v, llm_query_until_newline_v, max_query_chars_v, llm_query_max_user_chars_v, openai_api_base_v):
 	cfg["enable"] = bool(enable_v)
 	cfg["trigger_anywhere"] = bool(trigger_anywhere_v)
 	cfg["query_mode"] = (query_mode_v or "user_text")
@@ -136,6 +161,12 @@ def _apply_and_save(enable_v, trigger_anywhere_v, query_mode_v, backend_v, searc
 	cfg["search_mode"] = (search_mode_v or "simple")
 	cfg["full_handling"] = (full_handling_v or "inject")
 	cfg["fetch_engine"] = (fetch_engine_v or "local")
+
+	openai_base = _normalize_openai_api_base_input(openai_api_base_v)
+	if cfg.get("openai_api_base") != openai_base:
+		_reset_openai_api_base_cache()
+	cfg["openai_api_base"] = openai_base
+
 	cfg["llm_query_until_newline"] = bool(llm_query_until_newline_v)
 
 	try:
@@ -185,6 +216,8 @@ def ui():
 		llm_query_until_newline = gr.Checkbox(value=cfg["llm_query_until_newline"], label="LLM query until newline")
 		max_query_chars = gr.Number(value=cfg["max_query_chars"], label="Max query chars")
 		llm_query_max_user_chars = gr.Number(value=cfg["llm_query_max_user_chars"], label="LLM query max user chars")
+		openai_api_base = gr.Textbox(value=cfg.get("openai_api_base") or "auto", label="OpenAI API base (auto or URL)")
+		gr.Markdown("Use `auto` to probe Text Generation WebUI OpenAI API ports `5000..5005`, or set a fixed URL like `http://127.0.0.1:5001/v1`.")
 		apply_save = gr.Button(value="Apply & Save")
 		gr.Markdown("---")
 		cache_clear = gr.Button(value="Clear fetch cache")
@@ -201,10 +234,11 @@ def ui():
 		llm_query_until_newline.change(lambda v: _set_cfg("llm_query_until_newline", bool(v)), inputs=llm_query_until_newline, outputs=_sink)
 		max_query_chars.change(lambda v: _set_cfg("max_query_chars", int(v) if v is not None else 512), inputs=max_query_chars, outputs=_sink)
 		llm_query_max_user_chars.change(lambda v: _set_cfg("llm_query_max_user_chars", int(v) if v is not None else 1024), inputs=llm_query_max_user_chars, outputs=_sink)
+		openai_api_base.change(lambda v: _set_cfg("openai_api_base", v), inputs=openai_api_base, outputs=_sink)
 
 		apply_save.click(
 			_apply_and_save,
-			inputs=[enable, trigger_anywhere, query_mode, backend, search_mode, full_handling, fetch_engine, llm_query_until_newline, max_query_chars, llm_query_max_user_chars],
+			inputs=[enable, trigger_anywhere, query_mode, backend, search_mode, full_handling, fetch_engine, llm_query_until_newline, max_query_chars, llm_query_max_user_chars, openai_api_base],
 			outputs=[_sink, full_handling],
 		)
 
@@ -213,6 +247,74 @@ def ui():
 			inputs=[],
 			outputs=[cache_clear_status],
 		)
+
+def _openai_api_base_candidates() -> list:
+	out = []
+	for port in range(5000, 5006):
+		out.append(f"http://127.0.0.1:{port}/v1")
+	return out
+
+def _http_get_json(url: str, timeout_s: int) -> dict:
+	req = urllib.request.Request(
+		url,
+		method="GET",
+		headers={
+			"Accept": "application/json",
+		},
+	)
+	with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+		raw = resp.read().decode("utf-8", errors="replace")
+		return json.loads(raw)
+
+def _looks_like_openai_models_response(data: dict) -> bool:
+	if not isinstance(data, dict):
+		return False
+	if isinstance(data.get("data"), list):
+		return True
+	return False
+
+def _detect_openai_api_base() -> str:
+	effective_verbose = bool(cfg.get("verbose")) or _is_webui_verbose()
+	for base in _openai_api_base_candidates():
+		try:
+			data = _http_get_json(base.rstrip("/") + "/models", 1)
+			if _looks_like_openai_models_response(data):
+				if effective_verbose:
+					try:
+						print(f"[llm_web_search] openai_api_base_auto: {base}")
+					except Exception:
+						pass
+				return base
+		except Exception:
+			continue
+	return ""
+
+def _resolve_openai_api_base() -> str:
+	configured = _normalize_openai_api_base_input(cfg.get("openai_api_base") or "auto")
+	if configured != "auto":
+		return configured
+
+	try:
+		if (
+			_OPENAI_API_BASE_CACHE.get("configured") == configured
+			and _OPENAI_API_BASE_CACHE.get("detected")
+		):
+			return _OPENAI_API_BASE_CACHE.get("detected")
+	except Exception:
+		pass
+
+	detected = _detect_openai_api_base()
+	if detected:
+		try:
+			_OPENAI_API_BASE_CACHE["configured"] = configured
+			_OPENAI_API_BASE_CACHE["detected"] = detected
+		except Exception:
+			pass
+		return detected
+
+	# Newer Text Generation WebUI versions commonly use 5001 by default.
+	# Do NOT cache this fallback: the API/model may simply not be ready yet.
+	return "http://127.0.0.1:5001/v1"
 
 def _http_post_json(url: str, payload: dict, timeout_s: int) -> dict:
 	data = json.dumps(payload).encode("utf-8")
@@ -515,7 +617,7 @@ def _call_openai_snippet_rank(query_text: str, candidates: list, want_n: int, ti
 	if model:
 		payload["model"] = model
 
-	base = (cfg.get("openai_api_base") or "").rstrip("/")
+	base = _resolve_openai_api_base().rstrip("/")
 	url = base + "/chat/completions"
 
 	data = _http_post_json(url, payload, int(timeout_s))
@@ -690,7 +792,7 @@ def _call_openai_rewrite(user_text: str) -> str:
 	if model:
 		payload["model"] = model
 
-	base = (cfg.get("openai_api_base") or "").rstrip("/")
+	base = _resolve_openai_api_base().rstrip("/")
 	url = base + "/chat/completions"
 
 	# Prefer granular timeout if configured, otherwise fall back to legacy timeout_llm_s.
@@ -784,7 +886,7 @@ def _call_openai_pack(user_text: str, context_pack: str) -> str:
 	if model:
 		payload["model"] = model
 
-	base = (cfg.get("openai_api_base") or "").rstrip("/")
+	base = _resolve_openai_api_base().rstrip("/")
 	url = base + "/chat/completions"
 
 	to = cfg.get("timeout_pack_s")

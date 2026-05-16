@@ -1,4 +1,4 @@
-# WebSearch MistByte — FAQ (v1.1)
+# WebSearch MistByte — FAQ (v1.2)
 
 This FAQ documents:
 - WebUI panel settings (Text Generation WebUI extension)
@@ -8,6 +8,22 @@ This FAQ documents:
 - Why results may look inconsistent
 
 > Note: Output quality depends heavily on the LLM used for query rewrite / snippet ranking / summarization.
+
+## Why use WebSearcher if Text Generation WebUI already includes web search?
+
+Built-in WebUI search and WebSearcher are designed for different goals.
+
+Built-in WebUI search focuses on direct retrieval and tool-based workflows.
+
+WebSearcher focuses on:
+- smaller and more focused context packs;
+- reducing unnecessary prompt/context growth;
+- extraction and filtering of relevant content;
+- structured retrieval for local LLM workflows;
+- optional contextual enrichment alongside native tools.
+
+WebSearcher is designed to work together with modern tool-enabled LLM setups,
+not replace them.
 
 ---
 
@@ -91,6 +107,19 @@ Writes GUI settings to `llm_web_search.json`.
 ## Clear fetch cache
 Clears the searcher extraction cache (useful if you suspect stale cached extracts).
 - (Searcher-side cache, not WebUI browser cache)
+
+## OpenAI API base (auto or URL) 
+
+Current open API URL used. May be default (auto), or set to specific URL, especially, if you have several oodaboga running.
+
+Why is `openai_api_base` set to `auto` by default?
+
+Newer Text Generation WebUI versions may run the OpenAI-compatible API on different ports
+depending on the instance configuration.
+
+WebSearcher automatically probes ports `5000..5005`
+and uses the first working endpoint.
+You can also manually force a specific OpenAI-compatible endpoint if needed.
 
 ---
 
